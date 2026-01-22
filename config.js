@@ -4,17 +4,16 @@ const sd = new StyleDictionary({
   source: ['src/shared/styles/tokens/tokens.json'],
   platforms: {
     scss: {
-      // transformGroup 'scss' по умолчанию делает длинные имена. 
-      // Мы можем это переопределить через индивидуальные трансформы.
-      transforms: ['attribute/cti', 'name/cti/kebab', 'size/rem', 'color/css'],
+      // Мы используем стандартную группу scss, но добавим фильтрацию имен
+      transformGroup: 'scss', 
       buildPath: 'src/shared/styles/generated/',
       files: [
         {
           destination: '_tokens.scss',
           format: 'scss/variables',
           options: {
-            // Эта опция часто помогает убрать лишние уровни, если структура плоская
-            outputReferences: true 
+            outputReferences: true,
+            showFileHeader: false
           }
         },
       ],
