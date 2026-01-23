@@ -1,18 +1,169 @@
-# React + Vite
+# Design System - Tokens Studio Integration
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## 📋 Описание проекта
 
-Currently, two official plugins are available:
+Этот проект демонстрирует интеграцию **Figma → Tokens Studio → Style Dictionary** для автоматического преобразования дизайн-токенов в SCSS переменные.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## 🔄 Процесс передачи токенов: Figma → Код
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+### 1. **Figma + Tokens Studio**
+- В Figma используется плагин **Tokens Studio** для определения дизайн-токенов
+- Токены организованы в группы и режимы (например: "TokenTest/Mode 1")
+- Примеры токенов: размеры, цвета, высоты элементов управления и т.д.
+- Файл экспортируется в формате JSON
 
-Note: This will impact Vite dev & build performances.
+### 2. **Исходный файл токенов: `tokens.json`**
+```
+src/shared/styles/tokens/tokens.json
+```
 
-## Expanding the ESLint configuration
+Структура файла:
+```json
+{
+  "TokenTest/Mode 1": {
+    "Base": {
+      "size": {
+        "$type": "dimension",
+        "$value": "12px"
+      }
+    }
+  }
+}
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+**Особенности:**
+- Иерархическая структура: `Group/Mode` → `Category` → `TokenName`
+- Каждый токен имеет `$type` (тип данных) и `$value` (значение)
+
+### 3. **Трансформация через Style Dictionary**
+
+Файл `config.js` использует **Style Dictionary** — инструмент для преобразования токенов в разные форматы кода.
+
+---
+
+## ⚙️ Как работает `config.js`
+
+### Основные части конфига:
+
+#### **Источник токенов**
+```javascript
+source: ['src/shared/styles/tokens/tokens.json']
+```
+Style Dictionary читает токены из JSON файла.
+
+#### **Кастомная трансформация `name/shorten`**
+```javascript
+'name/shorten': {
+  type: 'name',
+  transform: (token) => {
+    return token.path.slice(2).join('-');
+  }
+}
+```
+
+**Что происходит:**
+- `token.path` — массив пути до токена: `["token-test", "mode-1", "base", "size"]`
+- `.slice(2)` — удаляет первые два элемента (группу и режим)
+- `.join('-')` — объединяет оставшиеся части с дефисом
+
+**Пример преобразования:**
+```
+TokenTest/Mode 1/Base/size  →  base-size
+TokenTest/Mode 1/Base/sizeLG  →  base-sizeLG
+```
+
+#### **Platform: SCSS**
+```javascript
+platforms: {
+  scss: {
+    transforms: ['attribute/cti', 'name/shorten', 'size/rem', 'color/css'],
+    buildPath: 'src/shared/styles/generated/',
+    files: [{
+      destination: '_tokens.scss',
+      format: 'scss/variables'
+    }]
+  }
+}
+```
+
+**Применяемые трансформации:**
+- `attribute/cti` — организация по типам токенов
+- `name/shorten` — сокращение имён (наша кастомная трансформация)
+- `size/rem` — конвертация размеров в rem
+- `color/css` — форматирование цветов для CSS
+
+**Результат:** генерируется файл `src/shared/styles/generated/_tokens.scss`
+
+---
+
+## 📤 Результат: Сгенерированные переменные
+
+После запуска `config.js` создаётся файл `_tokens.scss`:
+
+```scss
+// Сгенерированный файл: src/shared/styles/generated/_tokens.scss
+$base-size: 12px;
+$base-sizeLG: 1.5px;
+$base-sizeMD: 1.25rem;
+$control-height: 2rem;
+$control-heightLG: 2.5rem;
+// ... и так далее
+```
+
+Эти переменные можно использовать в других SCSS файлах проекта.
+
+---
+
+## 🚀 Использование токенов в коде
+
+### Пример: `Button.scss`
+```scss
+@import '../../styles/generated/tokens';
+
+.button {
+  height: $control-height;
+  padding: $base-size $base-sizeMD;
+  border-radius: $border-radius-base;
+}
+```
+
+### Пример: `HomePage.scss`
+```scss
+@import '../../styles/generated/tokens';
+
+.homepage {
+  font-size: $typography-base-size;
+  gap: $spacing-md;
+}
+```
+
+---
+
+## 🔁 Полный цикл обновления
+
+1. **Обновить токены в Figma** через Tokens Studio
+2. **Экспортировать токены** → обновить `tokens.json`
+3. **Запустить config.js** → сгенерировать новые `_tokens.scss`
+4. **Использовать переменные** в компонентах и стилях
+
+---
+
+## 📦 Stack
+
+- **Figma** — дизайн
+- **Tokens Studio** — управление и экспорт токенов
+- **Style Dictionary** — трансформация токенов в код
+- **SCSS** — целевой формат стилей
+- **Vite** — сборщик проекта
+
+---
+
+## 🎯 Преимущества такого подхода
+
+✅ **Синхронизация с дизайном** — изменения в Figma автоматически попадают в код  
+✅ **Единая система значений** — всё хранится в одном месте  
+✅ **Типизация** — каждый токен имеет чёткий тип (`dimension`, `color`, `typography`)  
+✅ **Кастомизация** — легко добавлять новые трансформации под нужды проекта  
+✅ **Масштабируемость** — просто добавить новые платформы (CSS-in-JS, JSON и т.д.)
