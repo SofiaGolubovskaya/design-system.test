@@ -1,22 +1,24 @@
 import StyleDictionary from 'style-dictionary';
 
-// 1. Регистрируем кастомный трансформер для имен
-StyleDictionary.registerTransform({
-  name: 'name/shorten',
-  type: 'name',
-  transformer: (token) => {
-    // token.path — это массив ключей: ["TokenTest", "Mode 1", "base", "size"]
-    // .slice(2) удаляет первые два элемента ("TokenTest" и "Mode 1")
-    // .join('-') склеивает остальное: "base-size"
-    return token.path.slice(2).join('-');
-  }
-});
-
 const sd = new StyleDictionary({
   source: ['src/shared/styles/tokens/tokens.json'],
+  // Hooks — это новый способ регистрации трансформаций в v5
+  hooks: {
+    transforms: {
+      'name/shorten': {
+        type: 'name',
+        transform: (token) => {
+          // token.path — это массив ["token-test", "mode-1", "base", "size"]
+          // slice(2) отрезает первые два элемента ("token-test" и "mode-1")
+          // join('-') склеивает остальное в "base-size"
+          return token.path.slice(2).join('-');
+        }
+      }
+    }
+  },
   platforms: {
     scss: {
-      // Используем наш новый трансформер 'name/shorten' вместе со стандартными
+      // Добавляем нашу новую трансформацию 'name/shorten' в список
       transforms: ['attribute/cti', 'name/shorten', 'size/rem', 'color/css'],
       buildPath: 'src/shared/styles/generated/',
       files: [
@@ -24,7 +26,6 @@ const sd = new StyleDictionary({
           destination: '_tokens.scss',
           format: 'scss/variables',
           options: {
-            outputReferences: true,
             showFileHeader: false
           }
         },
