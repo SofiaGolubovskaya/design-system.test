@@ -1,71 +1,113 @@
 import 'dotenv/config';
 import axios from 'axios';
 import fs from 'fs-extra';
+import { readFileSync } from 'node:fs';
 
 const { FIGMA_TOKEN, FIGMA_FILE_ID } = process.env;
 const client = axios.create({ headers: { 'X-Figma-Token': FIGMA_TOKEN } });
 
+/**
+ * 1. Функция для парсинга твоих сгенерированных SCSS файлов.
+ */
+function getTokensFromScss(fileName) {
+  const map = {};
+  try {
+    const filePath = `./src/shared/styles/generated/${fileName}`;
+    const content = readFileSync(filePath, 'utf-8');
+    
+    // Ищет переменные типа $s-4: 16px;
+    const regex = /\$([^:]+):\s*([^;]+);/g;
+    let match;
+    
+    while ((match = regex.exec(content)) !== null) {
+      const name = match[1].trim();
+      let value = match[2].trim().replace(/px/g, ''); 
+      map[value] = name; 
+    }
+  } catch (e) {
+    console.warn(`⚠️ Файл ${fileName} не найден.`);
+  }
+  return map;
+}
+
+const spacingMap = getTokensFromScss('_spacing.scss');
+const radiusMap = getTokensFromScss('_radius.scss');
+
+/**
+ * 2. Хелпер для поиска переменной. 
+ */
+const getVar = (val, map) => {
+  if (val === undefined || val === null) return '0px';
+  const key = String(val);
+  if (map[key]) {
+    return `$${map[key]}`; 
+  }
+  return `${val}px`; 
+};
+
+/**
+ * 3. Рекурсивный поиск всех компонентов
+ */
+function findAllComponents(node, components = []) {
+  if (node.type === 'COMPONENT') {
+    components.push(node);
+  }
+  if (node.children) {
+    node.children.forEach(child => findAllComponents(child, components));
+  }
+  return components;
+}
+
 async function run() {
   try {
-    console.log('--- 🔍 Начинаем поиск компонентов в Figma ---');
+    console.log('--- 🚀 Начинаем полную синхронизацию компонентов ---');
     
-    // 1. Получаем список всех компонентов в файле
-    const { data } = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}/components`);
-    const components = data.meta.components;
+    const { data } = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}`);
+    const components = findAllComponents(data.document);
 
-    if (!components || components.length === 0) {
-      console.log('❌ В файле не найдено ни одного компонента.');
-      console.log('Подсказка: Убедись, что твоя кнопка — это Main Component (фиолетовый ромбик в Figma).');
+    if (components.length === 0) {
+      console.log('❌ Компоненты не найдены.');
       return;
     }
 
-    console.log(`✅ Найдено компонентов: ${components.length}`);
-    
-    // Вывод списка всех компонентов
-    components.forEach((c, i) => {
-      console.log(`${i + 1}. [${c.name}] | ID: ${c.node_id}`);
-    });
+    for (const comp of components) {
+      // Очищаем имя компонента для названия папки и класса
+      const componentName = comp.name.replace(/[^a-zA-Z0-9]/g, '');
+      const folderPath = `./src/shared/ui/${componentName}`;
 
-    // 2. Ищем компонент, в имени которого есть "Button"
-    const button = components.find(c => c.name.toLowerCase().includes('button'));
+      console.log(`📦 Обработка: ${componentName}...`);
 
-    if (button) {
-      console.log(`\n🚀 Нашли кнопку: "${button.name}". Загружаем детали...`);
-      
-      const nodeResponse = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}/nodes?ids=${button.node_id}`);
-      const node = nodeResponse.data.nodes[button.node_id].document;
+      const scssContent = `
+// Автоматически сгенерированные стили для ${comp.name}
+@import "../../styles/generated/_spacing.scss";
+@import "../../styles/generated/_radius.scss";
 
-      // Генерируем простейшие стили
-      const scss = `
-// Сгенерировано автоматически из Figma (${button.name})
-.button {
-  padding: ${node.paddingTop || 0}px ${node.paddingRight || 0}px ${node.paddingBottom || 0}px ${node.paddingLeft || 0}px;
-  border-radius: ${node.cornerRadius || 0}px;
+.${componentName.toLowerCase()} {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  cursor: pointer;
+  box-sizing: border-box;
+  
+  /* Отступы (заменили button на comp) */
+  padding-top: ${getVar(comp.paddingTop, spacingMap)};
+  padding-right: ${getVar(comp.paddingRight, spacingMap)};
+  padding-bottom: ${getVar(comp.paddingBottom, spacingMap)};
+  padding-left: ${getVar(comp.paddingLeft, spacingMap)};
+  
+  /* Расстояние между элементами */
+  gap: ${getVar(comp.itemSpacing, spacingMap)};
+
+  /* Скругления */
+  border-radius: ${getVar(comp.cornerRadius, radiusMap)};
 }
-`;
-      
-      const path = './src/shared/ui/Button';
-      await fs.ensureDir(path);
-      await fs.outputFile(`${path}/Button.scss`, scss);
-      
-      console.log(`\n🎉 Успех! Файл стилей создан: ${path}/Button.scss`);
-    } else {
-      console.log('\n⚠️ Компонент со словом "Button" не обнаружен.');
+`.trim();
+
+      await fs.ensureDir(folderPath);
+      await fs.outputFile(`${folderPath}/${componentName}.scss`, scssContent);
     }
 
+    console.log(`\n✅ Успешно! Синхронизировано компонентов: ${components.length}`);
+    
   } catch (err) {
-    console.error('\n❌ Ошибка:');
-    if (err.response) {
-      console.error(`Статус: ${err.response.status}`);
-      console.error(`Данные: ${JSON.stringify(err.response.data)}`);
-    } else {
-      console.error(err.message);
-    }
+    console.error('❌ Ошибка выполнения:', err.message);
   }
 }
 
