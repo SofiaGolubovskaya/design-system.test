@@ -8,9 +8,12 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-   "build-tokens": "node config.js"
+    "build-tokens": "node config.js"
   },
   "dependencies": {
+    "axios": "^1.13.3",
+    "dotenv": "^17.2.3",
+    "fs-extra": "^11.3.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
