@@ -4,10 +4,16 @@ import fs from 'fs-extra';
 import { readFileSync } from 'node:fs';
 import inquirer from 'inquirer';
 
+// Инициализация переменных окружения и API клиента
 const { FIGMA_TOKEN, FIGMA_FILE_ID } = process.env;
-const client = axios.create({ headers: { 'X-Figma-Token': FIGMA_TOKEN } });
+const client = axios.create({ 
+  headers: { 'X-Figma-Token': FIGMA_TOKEN } 
+});
 
-// Читаем локальные токены из твоего проекта
+/**
+ * Читает сгенерированные SCSS файлы и создает карту { значение: имя_переменной }
+ * Это необходимо для "ручного маппинга" на бесплатном тарифе Figma.
+ */
 function getTokensFromScss(fileName) {
   const map = {};
   try {
@@ -15,34 +21,56 @@ function getTokensFromScss(fileName) {
     const regex = /\$([^:]+):\s*([^;]+);/g;
     let match;
     while ((match = regex.exec(content)) !== null) {
+      // Убираем 'px' из значения для точного числового сравнения
       map[match[2].trim().replace(/px/g, '')] = match[1].trim();
     }
-  } catch (e) { console.warn(`⚠️ Файл ${fileName} не найден.`); }
+  } catch (e) { 
+    console.warn(`⚠️ Файл токенов ${fileName} не найден. Проверьте генерацию в config.js.`); 
+  }
   return map;
 }
 
+// Загружаем карты токенов для отступов и скруглений
 const spacingMap = getTokensFromScss('_spacing.scss');
 const radiusMap = getTokensFromScss('_radius.scss');
 
+/**
+ * Пытается найти подходящую переменную для числового значения.
+ * Если совпадение не найдено, возвращает чистое значение в px.
+ */
 const getVar = (val, map) => {
   if (val === undefined || val === null) return '0px';
   const key = String(Math.round(val));
   return map[key] ? `$${map[key]}` : `${val}px`;
 };
 
+/**
+ * Рекурсивная функция для поиска компонентов в дереве слоев.
+ * Позволяет находить локальные компоненты без их публикации в библиотеку.
+ */
+const findComponentsInTree = (node, found = []) => {
+  if (node.type === 'COMPONENT') {
+    found.push({ name: node.name, id: node.id });
+  }
+  if (node.children) {
+    node.children.forEach(child => findComponentsInTree(child, found));
+  }
+  return found;
+};
+
 async function run() {
   try {
-    console.log('--- 🔎 Поиск компонентов в Figma ---');
+    console.log('--- 🔎 Поиск локальных компонентов в Figma ---');
 
-    // ШАГ 1: Получаем список компонентов (ОЧЕНЬ легкий запрос)
-    const { data: meta } = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}/components`);
-    const components = meta.meta.components;
+    // ШАГ 1: Получаем структуру всего файла (надежнее для бесплатного тарифа)
+    const { data: fileData } = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}`);
+    const components = findComponentsInTree(fileData.document);
 
     if (!components.length) {
-      return console.log('❌ Компоненты не найдены. Убедись, что они созданы в Figma (фиолетовый ромб).');
+      return console.log('❌ Компоненты не найдены. Убедись, что объект в Figma — это Main Component (фиолетовый ромб).');
     }
 
-    // ШАГ 2: Интерактивный выбор в консоли
+    // ШАГ 2: Интерактивный выбор компонента в консоли
     const { target } = await inquirer.prompt([
       {
         type: 'list',
@@ -52,13 +80,13 @@ async function run() {
       }
     ]);
 
-    console.log(`⏳ Синхронизирую [${target.name}]...`);
+    console.log(`⏳ Извлекаю данные для [${target.name}]...`);
 
-    // ШАГ 3: Запрос данных ТОЛЬКО этого компонента по его node_id
-    const { data: nodeData } = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}/nodes?ids=${target.node_id}`);
-    const comp = nodeData.nodes[target.node_id].document;
+    // ШАГ 3: Запрос детальных данных (nodes) конкретного компонента
+    const { data: nodeData } = await client.get(`https://api.figma.com/v1/files/${FIGMA_FILE_ID}/nodes?ids=${target.id}`);
+    const comp = nodeData.nodes[target.id].document;
 
-    // ГЕНЕРАЦИЯ SCSS
+    // ШАГ 4: Подготовка путей и генерация контента
     const componentName = comp.name.replace(/[^a-zA-Z0-9]/g, '');
     const folderPath = `./src/shared/ui/${componentName}`;
 
@@ -69,24 +97,32 @@ async function run() {
 .${componentName.toLowerCase()} {
   display: inline-flex;
   box-sizing: border-box;
+  
+  // Отступы (Paddings) с маппингом на токены
   padding-top: ${getVar(comp.paddingTop, spacingMap)};
   padding-right: ${getVar(comp.paddingRight, spacingMap)};
   padding-bottom: ${getVar(comp.paddingBottom, spacingMap)};
   padding-left: ${getVar(comp.paddingLeft, spacingMap)};
+  
+  // Расстояние между элементами (Auto Layout Gap)
   gap: ${getVar(comp.itemSpacing, spacingMap)};
+  
+  // Скругление углов
   border-radius: ${getVar(comp.cornerRadius, radiusMap)};
 }
 `.trim();
 
+    // ШАГ 5: Запись файла в проект
     await fs.ensureDir(folderPath);
     await fs.outputFile(`${folderPath}/${componentName}.scss`, scssContent);
-    console.log(`✅ Готово! Файл создан: ${folderPath}/${componentName}.scss`);
+    
+    console.log(`✅ Успешно! Файл стилей создан: ${folderPath}/${componentName}.scss`);
 
   } catch (err) {
     if (err.response?.status === 429) {
-      console.error('❌ Ошибка 429. Figma всё еще просит подождать. Попробуй через 2-3 минуты.');
+      console.error('❌ Ошибка 429: Слишком много запросов. Figma просит подождать 1-2 минуты.');
     } else {
-      console.error('❌ Ошибка:', err.message);
+      console.error('❌ Произошла ошибка:', err.message);
     }
   }
 }
